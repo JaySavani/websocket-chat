@@ -1,12 +1,61 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { connectWS } from "./ws";
 
 export default function App() {
+  const timer = useRef(null);
+  const socket = useRef(null);
   const [userName, setUserName] = useState("");
   const [showNamePopup, setShowNamePopup] = useState(true);
   const [inputName, setInputName] = useState("");
 
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState("");
+  const [typingUsers, setTypingUsers] = useState([]);
+
+  useEffect(() => {
+    socket.current = connectWS();
+    socket.current.on("connect", () => {
+      // socket.current.on("newuserjoined", (usename) => {
+      //   console.log(usename, "joined the room");
+      // });
+      socket.current.on("chatMessage", (msg) => {
+        setMessages((m) => [...m, msg]);
+      });
+
+      socket.current.on("typing", (userName) => {
+        setTypingUsers((prev) => {
+          if (prev.includes(userName)) return prev;
+          return [...prev, userName];
+        });
+      });
+
+      socket.current.on("stopTyping", (userName) => {
+        setTypingUsers((prev) => prev.filter((u) => u !== userName));
+      });
+    });
+
+    return () => {
+      socket.current.off("newuserjoined");
+      socket.current.off("chatMessage");
+      socket.current.off("typing");
+      socket.current.off("stopTyping");
+      socket.current.disconnect();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (text) {
+      socket.current.emit("typing", userName);
+      if (timer.current) clearTimeout(timer.current);
+    }
+    timer.current = setTimeout(() => {
+      socket.current.emit("stopTyping", userName);
+    }, 500);
+
+    return () => {
+      if (timer.current) clearTimeout(timer.current);
+    };
+  }, [text, userName]);
 
   // FORMAT TIMESTAMP TO HH:MM FOR MESSAGES
   function formatTime(ts) {
@@ -21,6 +70,7 @@ export default function App() {
     e.preventDefault();
     const trimmed = inputName.trim();
     if (!trimmed) return;
+    socket.current.emit("joinRoom", trimmed);
     setUserName(trimmed);
     setShowNamePopup(false);
   }
@@ -37,7 +87,12 @@ export default function App() {
       text: t,
       ts: Date.now(),
     };
+
     setMessages((m) => [...m, msg]);
+
+    socket.current.emit("stopTyping", userName);
+    socket.current.emit("chatMessage", msg);
+
     setText("");
   }
 
@@ -92,6 +147,13 @@ export default function App() {
               <div className="text-sm font-medium text-[#303030]">
                 Realtime group chat
               </div>
+              {typingUsers.length ? (
+                <div className="text-xs text-gray-500">
+                  {typingUsers.join(", ")} is typing...
+                </div>
+              ) : (
+                ""
+              )}
             </div>
             <div className="text-sm text-gray-500">
               Signed in as{" "}
